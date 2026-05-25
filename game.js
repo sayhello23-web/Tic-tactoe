@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════
    TIC TAC TOE — MULTIPLAYER ARENA
-   game.js  — cross-tab online via localStorage
+   game.js
    ═══════════════════════════════════════════════ */
 
 'use strict';
@@ -12,118 +12,85 @@ const LINES = [
   [0,4,8],[2,4,6]
 ];
 
-function calcWinner(sq) {
-  for (const [a,b,c] of LINES)
-    if (sq[a] && sq[a]===sq[b] && sq[a]===sq[c]) return sq[a];
-  return null;
-}
-function winLine(sq) {
-  for (const ln of LINES) {
-    const [a,b,c]=ln;
-    if (sq[a] && sq[a]===sq[b] && sq[a]===sq[c]) return ln;
+// ── Utility: calculate winner ──────────────────
+function calcWinner(squares) {
+  for (const [a, b, c] of LINES) {
+    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c])
+      return squares[a];
   }
   return null;
 }
 
-// ── AI minimax ─────────────────────────────────
-function minimax(board, isMax, depth) {
-  depth = depth||0;
-  const w = calcWinner(board);
-  if (w==='O') return 10-depth;
-  if (w==='X') return depth-10;
+// ── Utility: winning line indices ─────────────
+function winLine(squares) {
+  for (const line of LINES) {
+    const [a, b, c] = line;
+    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c])
+      return line;
+  }
+  return null;
+}
+
+// ── AI: Minimax ────────────────────────────────
+function minimax(board, isMax, depth = 0) {
+  const winner = calcWinner(board);
+  if (winner === 'O') return 10 - depth;
+  if (winner === 'X') return depth - 10;
   if (board.every(Boolean)) return 0;
+
   let best = isMax ? -Infinity : Infinity;
-  for (let i=0;i<9;i++) {
+  for (let i = 0; i < 9; i++) {
     if (!board[i]) {
-      board[i] = isMax?'O':'X';
-      const v = minimax(board,!isMax,depth+1);
+      board[i] = isMax ? 'O' : 'X';
+      const val = minimax(board, !isMax, depth + 1);
       board[i] = null;
-      best = isMax ? Math.max(best,v) : Math.min(best,v);
+      best = isMax ? Math.max(best, val) : Math.min(best, val);
     }
   }
   return best;
 }
+
 function bestMove(board) {
-  let best=-Infinity, move=-1;
-  for (let i=0;i<9;i++) {
+  let best = -Infinity, move = -1;
+  for (let i = 0; i < 9; i++) {
     if (!board[i]) {
-      board[i]='O';
-      const v=minimax(board,false,0);
-      board[i]=null;
-      if (v>best){best=v;move=i;}
+      board[i] = 'O';
+      const val = minimax(board, false);
+      board[i] = null;
+      if (val > best) { best = val; move = i; }
     }
   }
   return move;
 }
 
+// ── Random Room ID ─────────────────────────────
 function makeRoomId() {
-  return Math.random().toString(36).slice(2,7).toUpperCase();
-}
-
-// ═══════════════════════════════════════════════
-// CROSS-TAB MESSAGING via localStorage
-// BroadcastChannel only works same-tab; localStorage
-// storage events fire in ALL other tabs of the same origin.
-// ═══════════════════════════════════════════════
-const MSG_KEY_PREFIX = 'ttt_msg_';
-
-function lsSend(roomId, data) {
-  // Writing a unique key triggers the storage event in other tabs
-  const key = MSG_KEY_PREFIX + roomId;
-  const payload = JSON.stringify({ ...data, _ts: Date.now() });
-  try {
-    localStorage.setItem(key, payload);
-  } catch(e) { console.warn('localStorage unavailable', e); }
-}
-
-function lsCleanup(roomId) {
-  try { localStorage.removeItem(MSG_KEY_PREFIX + roomId); } catch(e){}
-}
-
-// The storage event only fires in OTHER tabs (not the sender).
-// So this listener is only for receiving messages from the opponent.
-function onStorageEvent(e) {
-  if (!state.roomId) return;
-  if (e.key !== MSG_KEY_PREFIX + state.roomId) return;
-  if (!e.newValue) return;
-  try {
-    const data = JSON.parse(e.newValue);
-    handleOnlineMsg(data);
-  } catch(err) { console.warn('msg parse error', err); }
-}
-window.addEventListener('storage', onStorageEvent);
-
-// ── Convenience wrapper ────────────────────────
-function send(data) {
-  if (state.mode === 'pvp-online' && state.roomId) {
-    lsSend(state.roomId, data);
-  }
+  return Math.random().toString(36).slice(2, 7).toUpperCase();
 }
 
 // ═══════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════
 const state = {
-  screen: 'home',
+  screen: 'home',       // home | lobby | waiting | game
   mode: null,           // pvp-offline | pva | pvp-online
   board: Array(9).fill(null),
   xIsNext: true,
-  scores: { X:0, O:0, D:0 },
-  result: null,
+  scores: { X: 0, O: 0, D: 0 },
+  result: null,         // null | 'X' | 'O' | 'D'
   myMark: 'X',
   roomId: '',
-  playerName: '',
-  playerNames: { X:'Player 1', O:'Player 2' },
+  playerNames: { X: 'Player 1', O: 'Player 2' },
   opponentConnected: false,
   aiThinking: false,
-  iAmHost: false,
 };
 
+let channel = null;     // BroadcastChannel instance
 let notifTimer = null;
-let aiTimer    = null;
+let aiTimer = null;
 
 // ═══════════════════════════════════════════════
-// DOM
+// DOM REFS
 // ═══════════════════════════════════════════════
 const $ = id => document.getElementById(id);
 const screens = {
@@ -133,6 +100,9 @@ const screens = {
   game:    $('screen-game'),
 };
 
+// ═══════════════════════════════════════════════
+// SCREEN MANAGER
+// ═══════════════════════════════════════════════
 function showScreen(name) {
   state.screen = name;
   Object.values(screens).forEach(s => s.classList.add('hidden'));
@@ -146,134 +116,101 @@ function showNotif(msg) {
   const el = $('notif');
   el.textContent = msg;
   el.classList.remove('hidden');
+  // force re-trigger animation
   el.style.animation = 'none';
   void el.offsetWidth;
   el.style.animation = '';
   clearTimeout(notifTimer);
-  notifTimer = setTimeout(() => el.classList.add('hidden'), 3500);
+  notifTimer = setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
 // ═══════════════════════════════════════════════
-// ONLINE MESSAGE HANDLER
+// ONLINE: BroadcastChannel
 // ═══════════════════════════════════════════════
+function openChannel(roomId) {
+  if (channel) { channel.close(); }
+  channel = new BroadcastChannel('ttt_' + roomId);
+  channel.onmessage = e => handleOnlineMsg(e.data);
+}
+
+function send(data) {
+  if (channel) channel.postMessage(data);
+}
+
 function handleOnlineMsg(data) {
   switch (data.type) {
-
-    // Joiner → Host: "I joined"
     case 'joined':
-      if (!state.iAmHost) return;           // ignore if we're not the host
       state.opponentConnected = true;
       state.playerNames[data.mark] = data.name;
-      // Host → Joiner: full sync
-      send({
-        type: 'sync',
-        hostName: state.playerNames['X'],
-        board: state.board,
-        xIsNext: state.xIsNext,
-        scores: state.scores,
-      });
       showScreen('game');
       renderGame();
-      showNotif(data.name + ' joined! Game starting…');
+      showNotif(data.name + ' joined!');
       break;
 
-    // Host → Joiner: full state sync
-    case 'sync':
-      if (state.iAmHost) return;            // host doesn't process its own sync
-      state.playerNames['X']  = data.hostName;
-      state.board             = data.board;
-      state.xIsNext           = data.xIsNext;
-      state.scores            = data.scores;
-      state.opponentConnected = true;
-      renderGame();
-      showNotif('Connected! Game starting…');
-      break;
-
-    // Either side: opponent played a cell
     case 'move':
-      state.board   = data.board;
+      state.board = data.board;
       state.xIsNext = data.xIsNext;
       renderBoard();
       updateTurnIndicator();
-      {
-        const winner = calcWinner(state.board);
-        const full   = state.board.every(Boolean);
-        if (winner)    applyResult(winner);
-        else if (full) applyResult('D');
-      }
+      checkResultAfterOnlineMove();
       break;
 
-    // Authoritative result+scores from the mover
-    case 'result':
-      if (state.result) break;             // already applied locally
-      state.result = data.result;
-      state.scores = data.scores;
-      renderScores();
-      renderBoard();
-      renderResultBanner();
-      renderTurnText('');
-      break;
-
-    // Restart
     case 'restart':
-      state.scores = data.scores;
       resetBoard();
       renderGame();
       break;
 
-    // Opponent left
     case 'leave':
-      state.opponentConnected = false;
       showNotif('Opponent left the room.');
-      renderRoomInfo();
-      renderTurnText('Opponent disconnected.');
+      state.opponentConnected = false;
+      renderGame();
+      showScreen('waiting');
       break;
   }
 }
 
-// Called on the RECEIVING end when opponent's move finishes the game.
-// The mover calls finishGame() which sends 'result'; receiver calls applyResult().
-function applyResult(winner) {
-  if (state.result) return;
-  state.result = winner;
-  renderBoard();
-  renderResultBanner();
-  renderTurnText('');
-  // scores will arrive in the 'result' message from the mover
+function checkResultAfterOnlineMove() {
+  const winner = calcWinner(state.board);
+  const full = state.board.every(Boolean);
+  if (winner) finishGame(winner);
+  else if (full) finishGame('D');
+  else renderGame();
 }
 
 // ═══════════════════════════════════════════════
-// GAME LOGIC
+// GAME ACTIONS
 // ═══════════════════════════════════════════════
 function handleCellClick(i) {
   if (state.board[i] || state.result || state.aiThinking) return;
 
+  // Online: only allow my turn
   if (state.mode === 'pvp-online') {
-    if (!state.opponentConnected) { showNotif('Waiting for opponent…'); return; }
-    const isMyTurn = (state.xIsNext && state.myMark==='X') ||
-                     (!state.xIsNext && state.myMark==='O');
+    const isMyTurn = (state.xIsNext && state.myMark === 'X') ||
+                     (!state.xIsNext && state.myMark === 'O');
     if (!isMyTurn) return;
   }
 
   const mark = state.xIsNext ? 'X' : 'O';
   state.board[i] = mark;
-  state.xIsNext  = !state.xIsNext;
+  state.xIsNext = !state.xIsNext;
 
   renderBoard();
-  updateTurnIndicator();
 
   const winner = calcWinner(state.board);
-  const full   = state.board.every(Boolean);
+  const full = state.board.every(Boolean);
 
-  if (state.mode === 'pvp-online') {
-    // Always send move FIRST (even winning moves)
-    send({ type:'move', board:state.board, xIsNext:state.xIsNext });
-    if (winner)    finishGame(winner);
-    else if (full) finishGame('D');
+  if (winner) {
+    finishGame(winner);
+  } else if (full) {
+    finishGame('D');
   } else {
-    if (winner)    finishGame(winner);
-    else if (full) finishGame('D');
-    else if (state.mode==='pva' && !state.xIsNext) scheduleAiMove();
+    updateTurnIndicator();
+    if (state.mode === 'pvp-online') {
+      send({ type: 'move', board: state.board, xIsNext: state.xIsNext });
+    }
+    if (state.mode === 'pva' && !state.xIsNext) {
+      scheduleAiMove();
+    }
   }
 }
 
@@ -284,62 +221,53 @@ function scheduleAiMove() {
   aiTimer = setTimeout(() => {
     if (state.result) return;
     const move = bestMove([...state.board]);
-    if (move===-1) return;
+    if (move === -1) return;
     state.board[move] = 'O';
     state.xIsNext = true;
     state.aiThinking = false;
     renderBoard();
     const winner = calcWinner(state.board);
-    const full   = state.board.every(Boolean);
-    if (winner)    finishGame(winner);
+    const full = state.board.every(Boolean);
+    if (winner) finishGame(winner);
     else if (full) finishGame('D');
-    else           updateTurnIndicator();
+    else updateTurnIndicator();
   }, 550);
 }
 
 function finishGame(winner) {
-  if (state.result) return;
   state.result = winner;
   state.scores[winner]++;
   renderScores();
-  renderBoard();
+  renderBoard();        // apply win-cell classes
   renderResultBanner();
   renderTurnText('');
-  if (state.mode === 'pvp-online') {
-    send({ type:'result', result:winner, scores:state.scores });
-  }
 }
 
 function resetBoard() {
   clearTimeout(aiTimer);
-  state.board      = Array(9).fill(null);
-  state.xIsNext    = true;
-  state.result     = null;
+  state.board = Array(9).fill(null);
+  state.xIsNext = true;
+  state.result = null;
   state.aiThinking = false;
 }
 
 function restart() {
   resetBoard();
   renderGame();
-  if (state.mode === 'pvp-online') {
-    send({ type:'restart', scores:state.scores });
-  }
+  if (state.mode === 'pvp-online') send({ type: 'restart' });
 }
 
 function leaveGame() {
-  if (state.mode === 'pvp-online') {
-    send({ type:'leave' });
-    lsCleanup(state.roomId);
-  }
+  if (state.mode === 'pvp-online') send({ type: 'leave' });
+  if (channel) { channel.close(); channel = null; }
   clearTimeout(aiTimer);
-  Object.assign(state, {
-    mode: null, roomId:'', iAmHost:false,
-    opponentConnected:false,
-    board: Array(9).fill(null),
-    result: null,
-    scores: {X:0,O:0,D:0},
-    aiThinking:false,
-  });
+  state.mode = null;
+  state.roomId = '';
+  state.opponentConnected = false;
+  state.board = Array(9).fill(null);
+  state.result = null;
+  state.scores = { X: 0, O: 0, D: 0 };
+  state.aiThinking = false;
   showScreen('home');
 }
 
@@ -349,40 +277,28 @@ function leaveGame() {
 function startOffline(mode) {
   state.mode = mode;
   state.playerNames = {
-    X: mode==='pva' ? 'You'    : 'Player 1',
-    O: mode==='pva' ? 'AI 🤖' : 'Player 2',
+    X: mode === 'pva' ? 'You'      : 'Player 1',
+    O: mode === 'pva' ? 'AI 🤖'   : 'Player 2',
   };
   resetBoard();
   renderGame();
   showScreen('game');
 }
 
-function goOnline() {
-  state.playerName = $('home-name').value.trim();
-  showScreen('lobby');
-}
-
 function createRoom() {
-  const name = state.playerName || 'Player 1';
-  const id   = makeRoomId();
-
-  // Clean any stale key first
-  lsCleanup(id);
-
-  Object.assign(state, {
-    roomId: id,
-    myMark: 'X',
-    iAmHost: true,
-    playerNames: { X:name, O:'Waiting...' },
-    opponentConnected: false,
-    mode: 'pvp-online',
-    scores: {X:0,O:0,D:0},
-  });
+  const name = $('home-name').value.trim() || 'Player 1';
+  const id = makeRoomId();
+  state.roomId = id;
+  state.myMark = 'X';
+  state.playerNames = { X: name, O: 'Waiting...' };
+  state.opponentConnected = false;
+  state.mode = 'pvp-online';
   resetBoard();
 
+  openChannel(id);
+
   $('waiting-room-code').textContent = id;
-  $('waiting-sub-text').textContent  =
-    'Open another tab → Play Online → Join Room → enter: ' + id;
+  $('waiting-sub-text').textContent = 'Open another tab → Online → Join → ' + id;
   showScreen('waiting');
   showNotif('Room ' + id + ' created!');
 }
@@ -391,30 +307,24 @@ function joinRoom() {
   const code = $('input-room-code').value.trim().toUpperCase();
   if (code.length < 4) { showNotif('Enter a valid room code.'); return; }
 
-  const name = state.playerName || 'Player 2';
-
-  Object.assign(state, {
-    roomId: code,
-    myMark: 'O',
-    iAmHost: false,
-    playerNames: { X:'Host', O:name },
-    opponentConnected: false,
-    mode: 'pvp-online',
-    scores: {X:0,O:0,D:0},
-  });
+  const name = $('home-name').value.trim() || 'Player 2';
+  state.roomId = code;
+  state.myMark = 'O';
+  state.playerNames = { X: 'Host', O: name };
+  state.opponentConnected = true;
+  state.mode = 'pvp-online';
   resetBoard();
+
+  openChannel(code);
 
   renderGame();
   showScreen('game');
-
-  // Small delay to let the screen render, then announce to host
-  setTimeout(() => {
-    send({ type:'joined', mark:'O', name });
-  }, 200);
+  // Notify the host
+  setTimeout(() => send({ type: 'joined', mark: 'O', name }), 100);
 }
 
 // ═══════════════════════════════════════════════
-// RENDER
+// RENDER FUNCTIONS
 // ═══════════════════════════════════════════════
 function renderGame() {
   renderRoomInfo();
@@ -434,10 +344,10 @@ function renderRoomInfo() {
     const badge = $('badge-connected');
     if (state.opponentConnected) {
       badge.textContent = 'Connected';
-      badge.className   = 'badge badge-online';
+      badge.className = 'badge badge-online';
     } else {
       badge.textContent = 'Waiting...';
-      badge.className   = 'badge badge-waiting';
+      badge.className = 'badge badge-waiting';
     }
     $('badge-my-mark').textContent = 'You: ' + state.myMark;
   } else {
@@ -457,89 +367,123 @@ function renderScores() {
 }
 
 function renderBoard() {
+  const winner = calcWinner(state.board);
   const wl = winLine(state.board) || [];
   const currentMark = state.xIsNext ? 'X' : 'O';
   const isMyTurn = state.mode !== 'pvp-online' ||
-    (state.xIsNext  && state.myMark==='X') ||
-    (!state.xIsNext && state.myMark==='O');
+                   (state.xIsNext  && state.myMark === 'X') ||
+                   (!state.xIsNext && state.myMark === 'O');
 
   document.querySelectorAll('.cell').forEach(cell => {
-    const i   = parseInt(cell.dataset.i, 10);
+    const i = parseInt(cell.dataset.i, 10);
     const val = state.board[i];
+    const isWin = wl.includes(i);
+
+    // Classes
     cell.className = 'cell';
     if (val) cell.classList.add('filled');
-    if (wl.includes(i) && val) cell.classList.add('win-cell', val.toLowerCase());
-    if ((!isMyTurn || state.result || state.aiThinking) && !val)
+    if (isWin && val) {
+      cell.classList.add('win-cell');
+      cell.classList.add(val.toLowerCase());
+    }
+    if ((!isMyTurn || state.result || state.aiThinking) && !val) {
       cell.classList.add('disabled');
+    }
+
+    // Symbol
     cell.innerHTML = val
       ? `<span class="cell-symbol ${val.toLowerCase()}">${val}</span>`
       : '';
   });
 
-  $('tag-x').classList.toggle('active', currentMark==='X' && !state.result);
-  $('tag-o').classList.toggle('active', currentMark==='O' && !state.result);
+  // Active player glow
+  const tagX = $('tag-x');
+  const tagO = $('tag-o');
+  tagX.classList.toggle('active', currentMark === 'X' && !state.result);
+  tagO.classList.toggle('active', currentMark === 'O' && !state.result);
 }
 
 function renderResultBanner() {
   const banner = $('result-banner');
-  if (!state.result) { banner.className='result-banner hidden'; return; }
+  if (!state.result) {
+    banner.classList.add('hidden');
+    banner.className = 'result-banner hidden';
+    return;
+  }
+  banner.classList.remove('hidden');
   banner.className = 'result-banner';
-  if (state.result==='D') {
+
+  if (state.result === 'D') {
     banner.classList.add('draw');
     $('result-text').textContent = 'DRAW!';
-    $('result-sub').textContent  = 'well played';
+    $('result-sub').textContent = 'well played';
   } else {
-    banner.classList.add(state.result==='X' ? 'x-wins' : 'o-wins');
+    const cls = state.result === 'X' ? 'x-wins' : 'o-wins';
+    banner.classList.add(cls);
     $('result-text').textContent = state.playerNames[state.result] + ' WINS!';
-    $('result-sub').textContent  = state.result + ' takes the round';
+    $('result-sub').textContent = state.result + ' takes the round';
   }
 }
 
 function updateTurnIndicator() {
-  if (state.result) { renderTurnText(''); return; }
+  const winner = calcWinner(state.board);
+  if (winner || state.result) { renderTurnText(''); return; }
+
   const currentMark = state.xIsNext ? 'X' : 'O';
   const isMyTurn = state.mode !== 'pvp-online' ||
-    (state.xIsNext  && state.myMark==='X') ||
-    (!state.xIsNext && state.myMark==='O');
+                   (state.xIsNext  && state.myMark === 'X') ||
+                   (!state.xIsNext && state.myMark === 'O');
 
   if (state.aiThinking) {
     renderTurnText('🤖 AI is thinking...');
-  } else if (state.mode==='pvp-online' && !state.opponentConnected) {
-    renderTurnText('Waiting for opponent to connect...');
-  } else if (state.mode==='pvp-online' && !isMyTurn) {
+  } else if (state.mode === 'pvp-online' && !isMyTurn) {
     renderTurnText('Waiting for opponent...');
   } else {
     renderTurnText(state.playerNames[currentMark] + "'s turn (" + currentMark + ')');
   }
 }
 
-function renderTurnText(txt) { $('turn-text').textContent = txt; }
+function renderTurnText(txt) {
+  $('turn-text').textContent = txt;
+}
+
 function renderLeaveBtn() {
-  $('btn-leave').textContent = state.mode==='pvp-online' ? 'Leave' : 'Menu';
+  $('btn-leave').textContent = state.mode === 'pvp-online' ? 'Leave' : 'Menu';
 }
 
 // ═══════════════════════════════════════════════
-// EVENTS
+// EVENT LISTENERS
 // ═══════════════════════════════════════════════
+
+// Home
 $('btn-pvp-offline').addEventListener('click', () => startOffline('pvp-offline'));
 $('btn-pva').addEventListener('click',         () => startOffline('pva'));
-$('btn-go-online').addEventListener('click',   goOnline);
+$('btn-go-online').addEventListener('click',   () => showScreen('lobby'));
 
+// Lobby
 $('btn-create-room').addEventListener('click', createRoom);
 $('btn-join-room').addEventListener('click',   joinRoom);
 $('btn-lobby-back').addEventListener('click',  () => showScreen('home'));
-$('input-room-code').addEventListener('keydown', e => { if(e.key==='Enter') joinRoom(); });
+$('input-room-code').addEventListener('keydown', e => {
+  if (e.key === 'Enter') joinRoom();
+});
 
+// Waiting
 $('btn-cancel-room').addEventListener('click', () => {
-  lsCleanup(state.roomId);
-  Object.assign(state,{mode:null,roomId:'',iAmHost:false});
+  if (channel) { channel.close(); channel = null; }
+  state.mode = null;
+  state.roomId = '';
   showScreen('home');
 });
 
+// Game board cells
 document.querySelectorAll('.cell').forEach(cell => {
-  cell.addEventListener('click', () => handleCellClick(parseInt(cell.dataset.i,10)));
+  cell.addEventListener('click', () => {
+    handleCellClick(parseInt(cell.dataset.i, 10));
+  });
 });
 
+// Game actions
 $('btn-restart').addEventListener('click', restart);
 $('btn-leave').addEventListener('click',   leaveGame);
 
