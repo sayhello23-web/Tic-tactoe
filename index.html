@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tic Tac Toe — Multiplayer Arena</title>
+  <meta name="description" content="Tic Tac Toe multiplayer game. Play locally, vs AI, or online with friends." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="scanlines"></div>
+  <div id="notif" class="notif hidden"></div>
+
+  <div class="app">
+    <h1>TIC TAC TOE</h1>
+    <div class="tagline">Multiplayer Arena</div>
+
+    <!-- ══ HOME SCREEN ══ -->
+    <div id="screen-home" class="screen">
+      <div class="menu-card">
+        <div class="menu-title">Select Mode</div>
+        <div class="mode-grid">
+          <div class="mode-card" id="btn-pvp-offline">
+            <div class="mode-icon">👥</div>
+            <div class="mode-name">Local PvP</div>
+          </div>
+          <div class="mode-card" id="btn-pva">
+            <div class="mode-icon">🤖</div>
+            <div class="mode-name">vs AI</div>
+          </div>
+        </div>
+        <div class="divider">Online Multiplayer</div>
+        <input id="home-name" type="text" placeholder="Your name (optional)" autocomplete="off" />
+        <button class="btn btn-primary" id="btn-go-online">🌐 Play Online</button>
+      </div>
+    </div>
+
+    <!-- ══ LOBBY SCREEN ══ -->
+    <div id="screen-lobby" class="screen hidden">
+      <div class="menu-card">
+        <div class="menu-title">Online Lobby</div>
+        <button class="btn btn-primary" id="btn-create-room">➕ Create Room</button>
+        <div class="divider">or join existing</div>
+        <input id="input-room-code" type="text" placeholder="Enter room code" maxlength="5" autocomplete="off" />
+        <button class="btn btn-secondary" id="btn-join-room">🔑 Join Room</button>
+        <div class="divider"></div>
+        <button class="btn btn-ghost" id="btn-lobby-back">← Back</button>
+        <div class="lobby-note">
+          Online uses BroadcastChannel (same browser tabs).<br />
+          Open two tabs → Create & Join to play PvP!
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ WAITING SCREEN ══ -->
+    <div id="screen-waiting" class="screen hidden">
+      <div class="menu-card" style="text-align:center">
+        <div class="room-label">Room Code</div>
+        <div id="waiting-room-code" class="room-code" style="font-size:2rem;margin:8px 0 20px"></div>
+        <span class="badge badge-waiting" style="margin-bottom:20px">Waiting for opponent</span>
+        <div class="waiting">
+          <div class="waiting-icon">⟳</div>
+          <div class="waiting-text">Share this code with a friend</div>
+          <div class="waiting-sub" id="waiting-sub-text"></div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-danger" id="btn-cancel-room">✕ Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ GAME SCREEN ══ -->
+    <div id="screen-game" class="screen hidden">
+      <div class="game-wrap">
+
+        <!-- Room info (online only) -->
+        <div id="room-info" class="room-info hidden">
+          <div>
+            <div class="room-label">Room</div>
+            <div id="game-room-code" class="room-code"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="badge-connected" class="badge badge-waiting">Waiting...</span>
+            <span id="badge-my-mark" class="badge badge-offline">You: X</span>
+          </div>
+        </div>
+
+        <!-- Status bar -->
+        <div class="status-bar">
+          <div style="display:flex;gap:12px;align-items:center">
+            <div class="player-tag x" id="tag-x">
+              <div class="mark x">X</div>
+              <span id="name-x">Player 1</span>
+            </div>
+            <span style="color:#333355">vs</span>
+            <div class="player-tag o" id="tag-o">
+              <div class="mark o">O</div>
+              <span id="name-o">Player 2</span>
+            </div>
+          </div>
+          <div class="score-row">
+            <div class="score-box x">
+              <div class="num" id="score-x">0</div>
+              <div class="lbl">X</div>
+            </div>
+            <div class="score-box d">
+              <div class="num" id="score-d">0</div>
+              <div class="lbl">Draw</div>
+            </div>
+            <div class="score-box o">
+              <div class="num" id="score-o">0</div>
+              <div class="lbl">O</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="turn-text" class="turn-text"></div>
+
+        <!-- Board -->
+        <div class="board" id="board">
+          <div class="cell" data-i="0"></div>
+          <div class="cell" data-i="1"></div>
+          <div class="cell" data-i="2"></div>
+          <div class="cell" data-i="3"></div>
+          <div class="cell" data-i="4"></div>
+          <div class="cell" data-i="5"></div>
+          <div class="cell" data-i="6"></div>
+          <div class="cell" data-i="7"></div>
+          <div class="cell" data-i="8"></div>
+        </div>
+
+        <!-- Result banner -->
+        <div id="result-banner" class="result-banner hidden">
+          <div class="result-text" id="result-text"></div>
+          <div class="result-sub" id="result-sub"></div>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+          <button class="btn btn-secondary" id="btn-restart" style="flex:1">↺ New Round</button>
+          <button class="btn btn-danger" id="btn-leave" style="flex:0 0 auto;width:auto;padding:14px 20px">Leave</button>
+        </div>
+
+      </div>
+    </div>
+    <!-- end game screen -->
+
+  </div><!-- end .app -->
+
+  <script src="game.js"></script>
+</body>
+  </html>
+
